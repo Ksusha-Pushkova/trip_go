@@ -1,5 +1,6 @@
 APP_NAME := trip-service
 BIN_DIR := bin
+SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 .PHONY: help
@@ -36,7 +37,9 @@ migrate: ## накатить все миграции
 .PHONY: migrate-down
 migrate-down: ## откатить последнюю миграцию
 	set -a && source .env && set +a && go tool goose -dir migrations postgres "$$DATABASE_URL" down
-
+.PHONY: migrate-status
+migrate-status: ## Показать статус миграций
+	set -a && source .env && set +a && go tool goose -dir migrations postgres "$$DATABASE_URL" status
 
 .PHONY: test
 test: ## прогнать все тесты
