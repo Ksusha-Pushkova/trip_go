@@ -21,8 +21,9 @@ run: ## запускает сервис
 .PHONY: generate
 generate: ## генрирует код из OpenAPI
 	go tool oapi-codegen \
+	-generate types,chi-server \
 	-package api \
-	-package api \
+	-include-operation-ids createTrip,getTrip,finishTrip,health,ready \
 	-o api/api.gen.go \
 	contracts/openapi/trip-service.openapi.yaml
 
