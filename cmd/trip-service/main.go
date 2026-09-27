@@ -10,6 +10,7 @@ import (
 	"github.com/Ksusha-Pushkova/trip_go/internal/config"
 	"github.com/Ksusha-Pushkova/trip_go/internal/repository/postgres"
 	httptransport "github.com/Ksusha-Pushkova/trip_go/internal/transport/http"
+	"github.com/Ksusha-Pushkova/trip_go/internal/usecase"
 )
 
 func main() {
@@ -21,7 +22,9 @@ func main() {
 		slog.Error("load config", "error", err)
 		os.Exit(1)
 	}
+
 	logger := newLogger(cfg.LogLevel)
+
 	pool, err := postgres.NewPool(ctx, cfg)
 	if err != nil {
 		logger.Error("connect to database", "error", err)
@@ -30,7 +33,12 @@ func main() {
 	defer pool.Close()
 
 	logger.Info("database connected")
-	handlers := httptransport.NewHandlers(logger)
+
+	txManager := postgres.NewTxManager(pool)
+	tripRepo := postgres.NewTripRepository(pool)
+	tripUsecase := usecase.NewTripUsecase(tripRepo, txManager)
+
+	handlers := httptransport.NewHandlers(logger, tripUsecase)
 	router := httptransport.NewRouter(handlers)
 	server := httptransport.NewServer(cfg.HTTPAddr, router, logger)
 
