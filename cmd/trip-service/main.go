@@ -38,7 +38,7 @@ func main() {
 	tripRepo := postgres.NewTripRepository(pool)
 	tripUsecase := usecase.NewTripUsecase(tripRepo, txManager)
 
-	handlers := httptransport.NewHandlers(logger, tripUsecase)
+	handlers := httptransport.NewHandlers(logger, tripUsecase, pool)
 	router := httptransport.NewRouter(handlers)
 	server := httptransport.NewServer(cfg.HTTPAddr, router, logger)
 

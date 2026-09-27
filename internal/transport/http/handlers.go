@@ -1,14 +1,15 @@
 package httptransport
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
-
+	"time"
 	"github.com/google/uuid"
-
+	"github.com/jackc/pgx/v5/pgxpool" 
 	"github.com/Ksusha-Pushkova/trip_go/api"
 	"github.com/Ksusha-Pushkova/trip_go/internal/domain"
 	"github.com/Ksusha-Pushkova/trip_go/internal/usecase"
@@ -17,12 +18,14 @@ import (
 type Handlers struct {
 	logger      *slog.Logger
 	tripUsecase usecase.TripUsecase
+	pool        *pgxpool.Pool
 }
 
-func NewHandlers(logger *slog.Logger, tripUsecase usecase.TripUsecase) *Handlers {
+func NewHandlers(logger *slog.Logger, tripUsecase usecase.TripUsecase, pool *pgxpool.Pool) *Handlers {
 	return &Handlers{
 		logger:      logger,
 		tripUsecase: tripUsecase,
+		pool:        pool,
 	}
 }
 
@@ -33,6 +36,15 @@ func (h *Handlers) Health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) Ready(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	if err := h.pool.Ping(ctx); err != nil {
+		h.logger.Warn("readiness check failed", "error", err)
+		writeJSON(w, http.StatusServiceUnavailable, api.HealthResponse{Status: api.Unavailable})
+		return
+	}
+
 	writeJSON(w, http.StatusOK, api.HealthResponse{Status: api.Ok})
 }
 
