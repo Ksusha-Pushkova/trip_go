@@ -4,15 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Ksusha-Pushkova/trip_go/api"
+	"github.com/Ksusha-Pushkova/trip_go/internal/domain"
+	"github.com/Ksusha-Pushkova/trip_go/internal/usecase"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool" 
-	"github.com/Ksusha-Pushkova/trip_go/api"
-	"github.com/Ksusha-Pushkova/trip_go/internal/domain"
-	"github.com/Ksusha-Pushkova/trip_go/internal/usecase"
 )
 
 type Handlers struct {

@@ -4,29 +4,29 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 .PHONY: help
-help: ## показывает список целй
+help: ## показывает список целей
 	@echo "available targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
 
 
 .PHONY: build
 build: ## собирает бинарь в bin/
-	go build -o $(BIN_DIR)/$(APP_NAME) ./cmd/trip-service 
+	go build -o $(BIN_DIR)/$(APP_NAME) ./cmd/trip-service
 
 
 .PHONY: run
 run: ## запускает сервис
-	set -a && source .env && set +a && go run .cmd/trip-service
+	set -a && source .env && set +a && go run ./cmd/trip-service
 
 
 .PHONY: generate
-generate: ## генрирует код из OpenAPI
+generate: ## генерирует код из OpenAPI
 	go tool oapi-codegen \
-	-generate types,chi-server \
-	-package api \
-	-include-operation-ids createTrip,getTrip,finishTrip,health,ready \
-	-o api/api.gen.go \
-	contracts/openapi/trip-service.openapi.yaml
+		-generate types,chi-server \
+		-package api \
+		-include-operation-ids createTrip,getTrip,finishTrip,health,ready \
+		-o api/api.gen.go \
+		contracts/openapi/trip-service.openapi.yaml
 
 
 .PHONY: migrate
@@ -37,9 +37,12 @@ migrate: ## накатить все миграции
 .PHONY: migrate-down
 migrate-down: ## откатить последнюю миграцию
 	set -a && source .env && set +a && go tool goose -dir migrations postgres "$$DATABASE_URL" down
+
+
 .PHONY: migrate-status
-migrate-status: ## Показать статус миграций
+migrate-status: ## показать статус миграций
 	set -a && source .env && set +a && go tool goose -dir migrations postgres "$$DATABASE_URL" status
+
 
 .PHONY: test
 test: ## прогнать все тесты

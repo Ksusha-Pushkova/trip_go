@@ -1,4 +1,5 @@
 package postgres
+
 import (
 	"context"
 	"errors"
@@ -26,18 +27,28 @@ type executor interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
+
 type tripRepository struct {
-	pool *pgxpool.Pool
+	pool         *pgxpool.Pool
+	queryTimeout time.Duration
 }
 
-func NewTripRepository(pool *pgxpool.Pool) *tripRepository {
-	return &tripRepository{pool: pool}
+func NewTripRepository(pool *pgxpool.Pool, queryTimeout time.Duration) *tripRepository {
+	return &tripRepository{
+		pool:         pool,
+		queryTimeout: queryTimeout,
+	}
 }
+
 func (r *tripRepository) getExecutor(ctx context.Context) executor {
 	if tx, ok := extractTx(ctx); ok {
 		return tx
 	}
 	return r.pool
+}
+
+func (r *tripRepository) queryContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, r.queryTimeout)
 }
 
 func (r *tripRepository) Create(ctx context.Context, trip domain.Trip) error {
@@ -65,7 +76,10 @@ func (r *tripRepository) Create(ctx context.Context, trip domain.Trip) error {
 		return fmt.Errorf("build insert query: %w", err)
 	}
 
-	_, err = r.getExecutor(ctx).Exec(ctx, query, args...)
+	queryCtx, cancel := r.queryContext(ctx)
+	defer cancel()
+
+	_, err = r.getExecutor(ctx).Exec(queryCtx, query, args...)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return domain.ErrDriverBusy
@@ -94,7 +108,10 @@ func (r *tripRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Tri
 		return nil, fmt.Errorf("build select query: %w", err)
 	}
 
-	row := r.getExecutor(ctx).QueryRow(ctx, query, args...)
+	queryCtx, cancel := r.queryContext(ctx)
+	defer cancel()
+
+	row := r.getExecutor(ctx).QueryRow(queryCtx, query, args...)
 
 	var trip domain.Trip
 	err = row.Scan(
@@ -124,19 +141,32 @@ func (r *tripRepository) Finish(ctx context.Context, id uuid.UUID) (*domain.Trip
 		Set("finished_at", now).
 		Set("updated_at", now).
 		Where(squirrel.Eq{"id": id}).
-		Where(squirrel.Eq{"status": domain.TripStatusActive}).   
+		Where(squirrel.Eq{"status": domain.TripStatusActive}).
 		PlaceholderFormat(squirrel.Dollar).
 		ToSql()
 	if err != nil {
 		return nil, fmt.Errorf("build update query: %w", err)
 	}
 
-	tag, err := r.getExecutor(ctx).Exec(ctx, query, args...)
+	queryCtx, cancel := r.queryContext(ctx)
+	defer cancel()
+
+	tag, err := r.getExecutor(ctx).Exec(queryCtx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("exec update: %w", err)
 	}
+
 	if tag.RowsAffected() == 0 {
-		return nil, domain.ErrTripCompleted   
+		trip, err := r.GetByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+
+		if trip.Status == domain.TripStatusCompleted {
+			return nil, domain.ErrTripCompleted
+		}
+
+		return nil, fmt.Errorf("unexpected trip status: %s", trip.Status)
 	}
 
 	return r.GetByID(ctx, id)
@@ -152,6 +182,7 @@ func (r *tripRepository) AddStatusHistory(
 	if from != "" {
 		fromVal = string(from)
 	}
+
 	query, args, err := squirrel.
 		Insert("trip_status_history").
 		Columns("trip_id", "from_status", "to_status", "reason").
@@ -162,7 +193,10 @@ func (r *tripRepository) AddStatusHistory(
 		return fmt.Errorf("build insert: %w", err)
 	}
 
-	if _, err := r.getExecutor(ctx).Exec(ctx, query, args...); err != nil {
+	queryCtx, cancel := r.queryContext(ctx)
+	defer cancel()
+
+	if _, err := r.getExecutor(ctx).Exec(queryCtx, query, args...); err != nil {
 		return fmt.Errorf("exec insert: %w", err)
 	}
 

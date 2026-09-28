@@ -14,7 +14,11 @@ import (
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		syscall.SIGINT,
+		syscall.SIGTERM,
+	)
 	defer stop()
 
 	cfg, err := config.Load()
@@ -34,13 +38,33 @@ func main() {
 
 	logger.Info("database connected")
 
-	txManager := postgres.NewTxManager(pool)
-	tripRepo := postgres.NewTripRepository(pool)
-	tripUsecase := usecase.NewTripUsecase(tripRepo, txManager)
+	txManager := postgres.NewTxManager(
+		pool,
+		cfg.DatabaseQueryTimeout,
+	)
 
-	handlers := httptransport.NewHandlers(logger, tripUsecase, pool)
+	tripRepo := postgres.NewTripRepository(
+		pool,
+		cfg.DatabaseQueryTimeout,
+	)
+
+	tripUsecase := usecase.NewTripUsecase(
+		tripRepo,
+		txManager,
+	)
+
+	handlers := httptransport.NewHandlers(
+		logger,
+		tripUsecase,
+		pool,
+	)
+
 	router := httptransport.NewRouter(handlers)
-	server := httptransport.NewServer(cfg.HTTPAddr, router, logger)
+	server := httptransport.NewServer(
+		cfg.HTTPAddr,
+		router,
+		logger,
+	)
 
 	if err := server.Run(ctx, cfg.ShutdownTimeout); err != nil {
 		logger.Error("server run", "error", err)
@@ -52,6 +76,7 @@ func main() {
 
 func newLogger(level string) *slog.Logger {
 	var lvl slog.Level
+
 	switch level {
 	case "debug":
 		lvl = slog.LevelDebug
@@ -63,6 +88,10 @@ func newLogger(level string) *slog.Logger {
 		lvl = slog.LevelInfo
 	}
 
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})
+	handler := slog.NewJSONHandler(
+		os.Stdout,
+		&slog.HandlerOptions{Level: lvl},
+	)
+
 	return slog.New(handler)
 }
