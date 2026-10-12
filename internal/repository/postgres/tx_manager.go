@@ -22,61 +22,89 @@ type PoolTxManager struct {
 	queryTimeout time.Duration
 }
 
-func NewTxManager(pool *pgxpool.Pool, queryTimeout time.Duration) *PoolTxManager {
+func NewTxManager(
+	pool *pgxpool.Pool,
+	queryTimeout time.Duration,
+) *PoolTxManager {
 	return &PoolTxManager{
 		pool:         pool,
 		queryTimeout: queryTimeout,
 	}
 }
 
-func (m *PoolTxManager) Do(ctx context.Context, fn func(ctx context.Context) error) error {
+func (m *PoolTxManager) Do(
+	ctx context.Context,
+	fn func(ctx context.Context) error,
+) (err error) {
 	if _, ok := extractTx(ctx); ok {
 		return fn(ctx)
 	}
 
-	beginCtx, beginCancel := context.WithTimeout(ctx, m.queryTimeout)
+	beginCtx, beginCancel := context.WithTimeout(
+		ctx,
+		m.queryTimeout,
+	)
+	defer beginCancel()
+
 	tx, err := m.pool.BeginTx(
 		beginCtx,
-		pgx.TxOptions{IsoLevel: pgx.ReadCommitted},
+		pgx.TxOptions{
+			IsoLevel: pgx.ReadCommitted,
+		},
 	)
-	beginCancel()
-
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return fmt.Errorf(
+			"begin tx: %w",
+			err,
+		)
 	}
 
 	defer func() {
-		if p := recover(); p != nil {
+		if panicValue := recover(); panicValue != nil {
 			rollbackCtx, cancel := context.WithTimeout(
 				context.WithoutCancel(ctx),
 				m.queryTimeout,
 			)
-			_ = tx.Rollback(rollbackCtx)
-			cancel()
+			defer cancel()
 
-			panic(p)
+			_ = tx.Rollback(rollbackCtx)
+
+			err = fmt.Errorf(
+				"transaction panic: %v",
+				panicValue,
+			)
 		}
 	}()
 
-	ctxWithTx := context.WithValue(ctx, txKey, tx)
+	ctxWithTx := context.WithValue(
+		ctx,
+		txKey,
+		tx,
+	)
 
 	if err := fn(ctxWithTx); err != nil {
 		rollbackCtx, cancel := context.WithTimeout(
 			context.WithoutCancel(ctx),
 			m.queryTimeout,
 		)
+		defer cancel()
+
 		_ = tx.Rollback(rollbackCtx)
-		cancel()
 
 		return err
 	}
 
-	commitCtx, commitCancel := context.WithTimeout(ctx, m.queryTimeout)
-	err = tx.Commit(commitCtx)
-	commitCancel()
+	commitCtx, commitCancel := context.WithTimeout(
+		ctx,
+		m.queryTimeout,
+	)
+	defer commitCancel()
 
-	if err != nil {
-		return fmt.Errorf("commit tx: %w", err)
+	if err := tx.Commit(commitCtx); err != nil {
+		return fmt.Errorf(
+			"commit tx: %w",
+			err,
+		)
 	}
 
 	return nil

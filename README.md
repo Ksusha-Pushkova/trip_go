@@ -20,7 +20,7 @@
 
 ## Требования
 
-* Go 1.24+
+* Go 1.26+
 * PostgreSQL
 * `goose` для миграций
 * `tripgoctl` для управления учебным окружением
@@ -31,6 +31,7 @@
 
 ```bash
 tripgoctl environment start
+tripgoctl cluster start
 ```
 
 ### 2. Применить миграции
@@ -61,17 +62,22 @@ http://localhost:8080
 
 Пример конфигурации находится в `.env.example`.
 
-| Переменная                   | Назначение                                |
-| ---------------------------- | ----------------------------------------- |
-| `HTTP_ADDR`                  | адрес HTTP-сервера                        |
-| `LOG_LEVEL`                  | уровень логирования                       |
-| `SHUTDOWN_TIMEOUT`           | время ожидания при graceful shutdown      |
-| `DATABASE_URL`               | строка подключения к PostgreSQL           |
-| `DATABASE_MAX_CONNS`         | максимальное количество соединений в пуле |
-| `DATABASE_MIN_CONNS`         | минимальное количество соединений в пуле  |
-| `DATABASE_MAX_CONN_LIFETIME` | максимальное время жизни соединения       |
-| `DATABASE_CONNECT_TIMEOUT`   | таймаут подключения к БД                  |
-| `DATABASE_QUERY_TIMEOUT`     | таймаут операций с БД                     |
+| Переменная                    | Назначение                                |
+| ----------------------------- | ----------------------------------------- |
+| `HTTP_ADDR`                   | адрес HTTP-сервера                        |
+| `HTTP_READ_TIMEOUT`           | таймаут чтения запроса                    |
+| `HTTP_READ_HEADER_TIMEOUT`    | таймаут чтения заголовков HTTP-запроса    |
+| `HTTP_WRITE_TIMEOUT`          | таймаут записи HTTP-ответа                |
+| `HTTP_IDLE_TIMEOUT`           | таймаут idle-соединения                   |
+| `LOG_LEVEL`                   | уровень логирования                       |
+| `SHUTDOWN_TIMEOUT`            | время ожидания при graceful shutdown      |
+| `DATABASE_URL`                | строка подключения к PostgreSQL           |
+| `DATABASE_MAX_CONNS`          | максимальное количество соединений в пуле |
+| `DATABASE_MIN_CONNS`          | минимальное количество соединений в пуле  |
+| `DATABASE_MAX_CONN_LIFETIME`  | максимальное время жизни соединения       |
+| `DATABASE_MAX_CONN_IDLE_TIME` | максимальное время простоя соединения     |
+| `DATABASE_CONNECT_TIMEOUT`    | таймаут подключения к БД                  |
+| `DATABASE_QUERY_TIMEOUT`      | таймаут операций с БД                     |
 
 Файл `.env` содержит локальные значения и не добавляется в Git.
 
@@ -81,6 +87,7 @@ http://localhost:8080
 
 ```http
 POST /api/v1/trips
+
 Content-Type: application/json
 ```
 
@@ -130,6 +137,7 @@ POST /api/v1/trips/{tripId}/finish
 
 ```text
 409 Conflict
+
 code: trip_completed
 ```
 
@@ -188,6 +196,8 @@ type TxManager interface {
 
 Репозиторий получает executor из контекста. Поэтому бизнес-логика не работает напрямую с `pgx` и не управляет транзакцией.
 
+Для транзакций используется уровень изоляции `Read Committed`.
+
 ### Атомарность создания поездки
 
 Создание поездки выполняется внутри одной транзакции:
@@ -201,7 +211,9 @@ type TxManager interface {
 
 Для `driver_id` используется частичный уникальный индекс, который запрещает наличие более одной активной поездки одного водителя.
 
-Нарушение ограничения PostgreSQL с кодом `23505` преобразуется в доменную ошибку `driver_busy` и возвращается клиенту как `409 Conflict`.
+Нарушение ограничения PostgreSQL с кодом `23505` проверяется дополнительно по имени ограничения `trips_driver_active_uniq`.
+
+При нарушении этого ограничения ошибка преобразуется в доменную ошибку `driver_busy` и возвращается клиенту как `409 Conflict`.
 
 Дополнительно проверена конкурентная нагрузка:
 
@@ -225,14 +237,25 @@ type TxManager interface {
 
 ### Таймауты
 
-Таймаут подключения к PostgreSQL и таймаут операций с базой данных задаются через переменные окружения:
+Таймауты подключения и работы с PostgreSQL задаются через переменные окружения:
 
 ```text
 DATABASE_CONNECT_TIMEOUT
 DATABASE_QUERY_TIMEOUT
+DATABASE_MAX_CONN_LIFETIME
+DATABASE_MAX_CONN_IDLE_TIME
 ```
 
-HTTP-сервер также использует таймауты, а при остановке применяется `SHUTDOWN_TIMEOUT`.
+HTTP-сервер также использует настраиваемые таймауты:
+
+```text
+HTTP_READ_TIMEOUT
+HTTP_READ_HEADER_TIMEOUT
+HTTP_WRITE_TIMEOUT
+HTTP_IDLE_TIMEOUT
+```
+
+При остановке сервиса применяется `SHUTDOWN_TIMEOUT`.
 
 ### Graceful shutdown
 
@@ -240,7 +263,7 @@ HTTP-сервер также использует таймауты, а при о
 
 1. прекращает принимать новые HTTP-запросы;
 2. корректно останавливает HTTP-сервер;
-3. закрывает ресурсы приложения;
+3. закрывает соединение с базой данных;
 4. завершает работу после обработки активных запросов в пределах `SHUTDOWN_TIMEOUT`.
 
 ## Makefile
@@ -289,7 +312,7 @@ make generate
 * идемпотентность создания поездки;
 * `Dockerfile`.
 
-Особое внимание уделялось основной части работы, в которую не входят эти пункты
+Особое внимание уделялось основной части работы, в которую не входят эти пункты.
 
 ## Структура проекта
 
@@ -302,6 +325,7 @@ make generate
 ├── internal/
 │   ├── config/
 │   ├── domain/
+│   ├── logger/
 │   ├── repository/
 │   ├── transport/
 │   └── usecase/

@@ -13,18 +13,21 @@ const (
 	TripStatusCompleted TripStatus = "completed"
 )
 
+type Destination struct {
+	Latitude  float64
+	Longitude float64
+}
+
 type Trip struct {
-	ID             uuid.UUID
-	UserID         uuid.UUID
-	DriverID       uuid.UUID
-	StartLatitude  float64
-	StartLongitude float64
-	EndLatitude    float64
-	EndLongitude   float64
-	Price          int64
-	Status         TripStatus
-	StartedAt      time.Time
-	FinishedAt     *time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID         uuid.UUID
+	UserID     uuid.UUID
+	DriverID   uuid.UUID
+	Start      Destination
+	End        Destination
+	Price      int64
+	Status     TripStatus
+	StartedAt  time.Time
+	FinishedAt *time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }

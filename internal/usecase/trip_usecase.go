@@ -3,7 +3,6 @@ package usecase
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -12,19 +11,9 @@ import (
 )
 
 type TripUsecase interface {
-	Create(ctx context.Context, input CreateTripInput) (*domain.Trip, error)
+	Create(ctx context.Context, trip domain.Trip) error
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Trip, error)
 	Finish(ctx context.Context, id uuid.UUID) (*domain.Trip, error)
-}
-
-type CreateTripInput struct {
-	UserID         uuid.UUID
-	DriverID       uuid.UUID
-	StartLatitude  float64
-	StartLongitude float64
-	EndLatitude    float64
-	EndLongitude   float64
-	Price          int64
 }
 
 type tripUsecase struct {
@@ -32,61 +21,101 @@ type tripUsecase struct {
 	txManager postgres.TxManager
 }
 
-func NewTripUsecase(repo postgres.TripRepository, txManager postgres.TxManager) TripUsecase {
-	return &tripUsecase{tripRepo: repo, txManager: txManager}
+func NewTripUsecase(
+	repo postgres.TripRepository,
+	txManager postgres.TxManager,
+) TripUsecase {
+	return &tripUsecase{
+		tripRepo:  repo,
+		txManager: txManager,
+	}
 }
 
-func (u *tripUsecase) Create(ctx context.Context, input CreateTripInput) (*domain.Trip, error) {
-	now := time.Now().UTC()
-	trip := domain.Trip{
-		ID:             uuid.New(),
-		UserID:         input.UserID,
-		DriverID:       input.DriverID,
-		StartLatitude:  input.StartLatitude,
-		StartLongitude: input.StartLongitude,
-		EndLatitude:    input.EndLatitude,
-		EndLongitude:   input.EndLongitude,
-		Price:          input.Price,
-		Status:         domain.TripStatusActive,
-		StartedAt:      now,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}
-
-	err := u.txManager.Do(ctx, func(ctx context.Context) error {
+func (u *tripUsecase) Create(
+	ctx context.Context,
+	trip domain.Trip,
+) error {
+	return u.txManager.Do(ctx, func(ctx context.Context) error {
 		if err := u.tripRepo.Create(ctx, trip); err != nil {
 			return fmt.Errorf("create trip: %w", err)
 		}
-		if err := u.tripRepo.AddStatusHistory(ctx, trip.ID, "", domain.TripStatusActive, "created"); err != nil {
-			return fmt.Errorf("add status history: %w", err)
+
+		if err := u.tripRepo.AddStatusHistory(
+			ctx,
+			trip.ID,
+			"",
+			domain.TripStatusActive,
+			"created",
+		); err != nil {
+			return fmt.Errorf(
+				"add status history: %w",
+				err,
+			)
 		}
+
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	return &trip, nil
 }
 
-func (u *tripUsecase) GetByID(ctx context.Context, id uuid.UUID) (*domain.Trip, error) {
+func (u *tripUsecase) GetByID(
+	ctx context.Context,
+	id uuid.UUID,
+) (*domain.Trip, error) {
 	return u.tripRepo.GetByID(ctx, id)
 }
 
-func (u *tripUsecase) Finish(ctx context.Context, id uuid.UUID) (*domain.Trip, error) {
+func (u *tripUsecase) Finish(
+	ctx context.Context,
+	id uuid.UUID,
+) (*domain.Trip, error) {
 	var result *domain.Trip
 
 	err := u.txManager.Do(ctx, func(ctx context.Context) error {
-		trip, err := u.tripRepo.Finish(ctx, id)
+		updated, err := u.tripRepo.Finish(ctx, id)
 		if err != nil {
 			return err
 		}
-		if err := u.tripRepo.AddStatusHistory(ctx, id, domain.TripStatusActive, domain.TripStatusCompleted, "completed by driver"); err != nil {
-			return fmt.Errorf("add status history: %w", err)
+
+		if !updated {
+			trip, err := u.tripRepo.GetByID(ctx, id)
+			if err != nil {
+				return err
+			}
+
+			if trip.Status == domain.TripStatusCompleted {
+				return domain.ErrTripCompleted
+			}
+
+			return fmt.Errorf(
+				"unexpected trip status: %s",
+				trip.Status,
+			)
 		}
-		result = trip
+
+		if err := u.tripRepo.AddStatusHistory(
+			ctx,
+			id,
+			domain.TripStatusActive,
+			domain.TripStatusCompleted,
+			"completed by driver",
+		); err != nil {
+			return fmt.Errorf(
+				"add status history: %w",
+				err,
+			)
+		}
+
+		result, err = u.tripRepo.GetByID(ctx, id)
+		if err != nil {
+			return fmt.Errorf(
+				"get finished trip: %w",
+				err,
+			)
+		}
+
 		return nil
 	})
+
 	if err != nil {
 		return nil, err
 	}

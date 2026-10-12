@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/Ksusha-Pushkova/trip_go/internal/config"
+	"github.com/Ksusha-Pushkova/trip_go/internal/logger"
 	"github.com/Ksusha-Pushkova/trip_go/internal/repository/postgres"
 	httptransport "github.com/Ksusha-Pushkova/trip_go/internal/transport/http"
 	"github.com/Ksusha-Pushkova/trip_go/internal/usecase"
@@ -27,25 +28,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger := newLogger(cfg.LogLevel)
+	appLogger := logger.New(cfg.LogLevel)
 
 	pool, err := postgres.NewPool(ctx, cfg)
 	if err != nil {
-		logger.Error("connect to database", "error", err)
+		appLogger.Error(
+			"connect to database",
+			"error", err,
+		)
 		os.Exit(1)
 	}
 	defer pool.Close()
 
-	logger.Info("database connected")
+	appLogger.Info("database connected")
 
 	txManager := postgres.NewTxManager(
 		pool,
-		cfg.DatabaseQueryTimeout,
+		cfg.Database.QueryTimeout,
 	)
 
 	tripRepo := postgres.NewTripRepository(
 		pool,
-		cfg.DatabaseQueryTimeout,
+		cfg.Database.QueryTimeout,
 	)
 
 	tripUsecase := usecase.NewTripUsecase(
@@ -54,44 +58,30 @@ func main() {
 	)
 
 	handlers := httptransport.NewHandlers(
-		logger,
+		appLogger,
 		tripUsecase,
 		pool,
+		cfg.Database.QueryTimeout,
 	)
 
 	router := httptransport.NewRouter(handlers)
+
 	server := httptransport.NewServer(
-		cfg.HTTPAddr,
+		cfg.HTTP,
 		router,
-		logger,
+		appLogger,
 	)
 
-	if err := server.Run(ctx, cfg.ShutdownTimeout); err != nil {
-		logger.Error("server run", "error", err)
+	if err := server.Run(
+		ctx,
+		cfg.ShutdownTimeout,
+	); err != nil {
+		appLogger.Error(
+			"server run",
+			"error", err,
+		)
 		os.Exit(1)
 	}
 
-	logger.Info("application stopped")
-}
-
-func newLogger(level string) *slog.Logger {
-	var lvl slog.Level
-
-	switch level {
-	case "debug":
-		lvl = slog.LevelDebug
-	case "warn":
-		lvl = slog.LevelWarn
-	case "error":
-		lvl = slog.LevelError
-	default:
-		lvl = slog.LevelInfo
-	}
-
-	handler := slog.NewJSONHandler(
-		os.Stdout,
-		&slog.HandlerOptions{Level: lvl},
-	)
-
-	return slog.New(handler)
+	appLogger.Info("application stopped")
 }
