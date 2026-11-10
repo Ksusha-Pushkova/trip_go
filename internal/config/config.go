@@ -1,3 +1,4 @@
+// Package config loads and validates application configuration from environment variables.
 package config
 
 import (
@@ -7,13 +8,17 @@ import (
 	"time"
 )
 
+// Config contains the complete application configuration.
 type Config struct {
 	HTTP            HTTPConfig
 	Database        DatabaseConfig
 	LogLevel        string
 	ShutdownTimeout time.Duration
+	OTLPEndpoint    string
+	ServiceName     string
 }
 
+// HTTPConfig contains HTTP server configuration and timeout settings.
 type HTTPConfig struct {
 	Addr              string
 	ReadTimeout       time.Duration
@@ -22,6 +27,7 @@ type HTTPConfig struct {
 	IdleTimeout       time.Duration
 }
 
+// DatabaseConfig contains PostgreSQL connection and pool settings.
 type DatabaseConfig struct {
 	URL             string
 	MaxConns        int32
@@ -32,6 +38,7 @@ type DatabaseConfig struct {
 	QueryTimeout    time.Duration
 }
 
+// Load reads application configuration from environment variables and validates it.
 func Load() (Config, error) {
 	dbURL, err := getRequiredEnv("DATABASE_URL")
 	if err != nil {
@@ -152,6 +159,8 @@ func Load() (Config, error) {
 			QueryTimeout:    queryTimeout,
 		},
 		LogLevel:        getStringEnv("LOG_LEVEL", "info"),
+		OTLPEndpoint:    getStringEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317"),
+		ServiceName:     getStringEnv("OTEL_SERVICE_NAME", "trip-service"),
 		ShutdownTimeout: shutdownTimeout,
 	}, nil
 }

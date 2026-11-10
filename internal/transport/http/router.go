@@ -2,15 +2,32 @@ package httptransport
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Ksusha-Pushkova/trip_go/api"
+	"github.com/Ksusha-Pushkova/trip_go/internal/telemetry"
 )
 
-func NewRouter(handlers api.ServerInterface) http.Handler {
+// NewRouter creates an HTTP router with middleware and API handlers.
+func NewRouter(
+	handlers api.ServerInterface,
+	logger *slog.Logger,
+	metrics ...*telemetry.Metrics,
+) http.Handler {
+	var m *telemetry.Metrics
+	if len(metrics) > 0 {
+		m = metrics[0]
+	}
+
 	r := chi.NewRouter()
+
+	r.Use(RecoverMiddleware(logger))
+	r.Use(TracingMiddleware())
+	r.Use(LoggingMiddleware(logger))
+	r.Use(MetricsMiddleware(m))
 
 	options := api.ChiServerOptions{
 		BaseRouter:       r,

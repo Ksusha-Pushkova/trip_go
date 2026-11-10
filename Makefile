@@ -47,8 +47,14 @@ migrate-status: ## показать статус миграций
 .PHONY: test
 test: ## прогнать все тесты
 	go test -race ./...
+test-integration:
+	set -a && source .env && set +a && go test -tags=integration ./internal/repository/postgres -v
 
 
 .PHONY: clean
 clean: ## удаляет собранные бинари
 	-rm -rf $(BIN_DIR)
+
+.PHONY: lint
+lint: ## запускает golangci-lint
+	golangci-lint run

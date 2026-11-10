@@ -13,15 +13,18 @@ type contextKey struct{}
 
 var txKey = contextKey{}
 
+// TxManager defines an interface for executing database transactions.
 type TxManager interface {
 	Do(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
+// PoolTxManager manages database transactions using a PostgreSQL connection pool.
 type PoolTxManager struct {
 	pool         *pgxpool.Pool
 	queryTimeout time.Duration
 }
 
+// NewTxManager creates a new transaction manager.
 func NewTxManager(
 	pool *pgxpool.Pool,
 	queryTimeout time.Duration,
@@ -32,6 +35,7 @@ func NewTxManager(
 	}
 }
 
+// Do executes the given function within a database transaction.
 func (m *PoolTxManager) Do(
 	ctx context.Context,
 	fn func(ctx context.Context) error,

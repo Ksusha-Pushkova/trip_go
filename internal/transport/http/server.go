@@ -10,11 +10,13 @@ import (
 	"github.com/Ksusha-Pushkova/trip_go/internal/config"
 )
 
+// Server manages the HTTP server lifecycle.
 type Server struct {
 	httpServer *http.Server
 	logger     *slog.Logger
 }
 
+// NewServer creates a new HTTP server using the provided configuration.
 func NewServer(
 	cfg config.HTTPConfig,
 	handler http.Handler,
@@ -33,6 +35,7 @@ func NewServer(
 	}
 }
 
+// Run starts the HTTP server and gracefully shuts it down when the context is canceled.
 func (s *Server) Run(
 	ctx context.Context,
 	shutdownTimeout time.Duration,
