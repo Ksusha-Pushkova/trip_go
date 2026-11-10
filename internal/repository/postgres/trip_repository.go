@@ -12,18 +12,20 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/Ksusha-Pushkova/trip_go/internal/domain"
+	tripdomain "github.com/Ksusha-Pushkova/trip_go/internal/domain/trip"
 )
 
+// TripRepository defines operations for managing trips in PostgreSQL.
 type TripRepository interface {
-	Create(ctx context.Context, trip domain.Trip) error
-	GetByID(ctx context.Context, id uuid.UUID) (*domain.Trip, error)
-	Finish(ctx context.Context, id uuid.UUID) (bool, error)
+	Create(ctx context.Context, trip tripdomain.Trip) error
+	GetByID(ctx context.Context, id uuid.UUID) (*tripdomain.Trip, error)
+	Finish(ctx context.Context, id uuid.UUID, at time.Time) (bool, error)
+	CountActive(ctx context.Context) (int64, error)
 	AddStatusHistory(
 		ctx context.Context,
 		tripID uuid.UUID,
 		from,
-		to domain.TripStatus,
+		to tripdomain.Status,
 		reason string,
 	) error
 }
@@ -53,10 +55,11 @@ type tripRepository struct {
 	queryTimeout time.Duration
 }
 
+// NewTripRepository creates a new PostgreSQL trip repository.
 func NewTripRepository(
 	pool *pgxpool.Pool,
 	queryTimeout time.Duration,
-) *tripRepository {
+) TripRepository {
 	return &tripRepository{
 		pool:         pool,
 		queryTimeout: queryTimeout,
@@ -81,7 +84,7 @@ func (r *tripRepository) queryContext(
 
 func (r *tripRepository) Create(
 	ctx context.Context,
-	trip domain.Trip,
+	trip tripdomain.Trip,
 ) error {
 	query, args, err := squirrel.
 		Insert("trips").
@@ -119,10 +122,7 @@ func (r *tripRepository) Create(
 		ToSql()
 
 	if err != nil {
-		return fmt.Errorf(
-			"build insert query: %w",
-			err,
-		)
+		return fmt.Errorf("build insert query: %w", err)
 	}
 
 	queryCtx, cancel := r.queryContext(ctx)
@@ -135,13 +135,10 @@ func (r *tripRepository) Create(
 	)
 	if err != nil {
 		if isDriverBusyViolation(err) {
-			return domain.ErrDriverBusy
+			return tripdomain.ErrDriverBusy
 		}
 
-		return fmt.Errorf(
-			"exec insert: %w",
-			err,
-		)
+		return fmt.Errorf("exec insert: %w", err)
 	}
 
 	return nil
@@ -150,7 +147,7 @@ func (r *tripRepository) Create(
 func (r *tripRepository) GetByID(
 	ctx context.Context,
 	id uuid.UUID,
-) (*domain.Trip, error) {
+) (*tripdomain.Trip, error) {
 	query, args, err := squirrel.
 		Select(
 			"id",
@@ -173,10 +170,7 @@ func (r *tripRepository) GetByID(
 		ToSql()
 
 	if err != nil {
-		return nil, fmt.Errorf(
-			"build select query: %w",
-			err,
-		)
+		return nil, fmt.Errorf("build select query: %w", err)
 	}
 
 	queryCtx, cancel := r.queryContext(ctx)
@@ -188,7 +182,7 @@ func (r *tripRepository) GetByID(
 		args...,
 	)
 
-	var trip domain.Trip
+	var trip tripdomain.Trip
 
 	err = row.Scan(
 		&trip.ID,
@@ -207,41 +201,53 @@ func (r *tripRepository) GetByID(
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, domain.ErrTripNotFound
+			return nil, tripdomain.ErrTripNotFound
 		}
 
-		return nil, fmt.Errorf(
-			"scan trip: %w",
-			err,
-		)
+		return nil, fmt.Errorf("scan trip: %w", err)
 	}
 
 	return &trip, nil
 }
 
+func (r *tripRepository) CountActive(ctx context.Context) (int64, error) {
+	queryCtx, cancel := r.queryContext(ctx)
+	defer cancel()
+
+	var count int64
+
+	err := r.getExecutor(ctx).QueryRow(
+		queryCtx,
+		`SELECT COUNT(*) FROM trips WHERE status = $1`,
+		tripdomain.StatusActive,
+	).Scan(&count)
+
+	if err != nil {
+		return 0, fmt.Errorf("count active trips: %w", err)
+	}
+
+	return count, nil
+}
+
 func (r *tripRepository) Finish(
 	ctx context.Context,
 	id uuid.UUID,
+	at time.Time,
 ) (bool, error) {
-	now := time.Now().UTC()
-
 	query, args, err := squirrel.
 		Update("trips").
-		Set("status", domain.TripStatusCompleted).
-		Set("finished_at", now).
-		Set("updated_at", now).
+		Set("status", tripdomain.StatusCompleted).
+		Set("finished_at", at).
+		Set("updated_at", at).
 		Where(squirrel.Eq{"id": id}).
 		Where(squirrel.Eq{
-			"status": domain.TripStatusActive,
+			"status": tripdomain.StatusActive,
 		}).
 		PlaceholderFormat(squirrel.Dollar).
 		ToSql()
 
 	if err != nil {
-		return false, fmt.Errorf(
-			"build update query: %w",
-			err,
-		)
+		return false, fmt.Errorf("build update query: %w", err)
 	}
 
 	queryCtx, cancel := r.queryContext(ctx)
@@ -253,10 +259,7 @@ func (r *tripRepository) Finish(
 		args...,
 	)
 	if err != nil {
-		return false, fmt.Errorf(
-			"exec update: %w",
-			err,
-		)
+		return false, fmt.Errorf("exec update: %w", err)
 	}
 
 	return tag.RowsAffected() == 1, nil
@@ -266,7 +269,7 @@ func (r *tripRepository) AddStatusHistory(
 	ctx context.Context,
 	tripID uuid.UUID,
 	from,
-	to domain.TripStatus,
+	to tripdomain.Status,
 	reason string,
 ) error {
 	var fromValue any
@@ -293,10 +296,7 @@ func (r *tripRepository) AddStatusHistory(
 		ToSql()
 
 	if err != nil {
-		return fmt.Errorf(
-			"build insert: %w",
-			err,
-		)
+		return fmt.Errorf("build insert: %w", err)
 	}
 
 	queryCtx, cancel := r.queryContext(ctx)
@@ -307,10 +307,7 @@ func (r *tripRepository) AddStatusHistory(
 		query,
 		args...,
 	); err != nil {
-		return fmt.Errorf(
-			"exec insert: %w",
-			err,
-		)
+		return fmt.Errorf("exec insert: %w", err)
 	}
 
 	return nil

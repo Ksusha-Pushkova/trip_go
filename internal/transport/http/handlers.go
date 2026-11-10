@@ -10,39 +10,46 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Ksusha-Pushkova/trip_go/api"
-	"github.com/Ksusha-Pushkova/trip_go/internal/domain"
-	"github.com/Ksusha-Pushkova/trip_go/internal/usecase"
+	tripdomain "github.com/Ksusha-Pushkova/trip_go/internal/domain/trip"
 )
 
+// Handlers implements the HTTP handlers for trip and health endpoints.
 type Handlers struct {
 	logger               *slog.Logger
-	tripUsecase          usecase.TripUsecase
-	pool                 *pgxpool.Pool
+	createUseCase        createUseCase
+	getUseCase           getUseCase
+	finishUseCase        finishUseCase
+	readiness            readinessChecker
 	databaseQueryTimeout time.Duration
 }
 
+// NewHandlers creates a new set of HTTP handlers.
 func NewHandlers(
 	logger *slog.Logger,
-	tripUsecase usecase.TripUsecase,
-	pool *pgxpool.Pool,
+	createUC createUseCase,
+	getUC getUseCase,
+	finishUC finishUseCase,
+	readiness readinessChecker,
 	databaseQueryTimeout time.Duration,
 ) *Handlers {
 	return &Handlers{
 		logger:               logger,
-		tripUsecase:          tripUsecase,
-		pool:                 pool,
+		createUseCase:        createUC,
+		getUseCase:           getUC,
+		finishUseCase:        finishUC,
+		readiness:            readiness,
 		databaseQueryTimeout: databaseQueryTimeout,
 	}
 }
 
 var _ api.ServerInterface = (*Handlers)(nil)
 
+// Health returns the health status of the service.
 func (h *Handlers) Health(
 	w http.ResponseWriter,
-	r *http.Request,
+	_ *http.Request,
 ) {
 	writeJSON(
 		w,
@@ -51,6 +58,7 @@ func (h *Handlers) Health(
 	)
 }
 
+// Ready checks whether the service dependencies are ready.
 func (h *Handlers) Ready(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -61,7 +69,7 @@ func (h *Handlers) Ready(
 	)
 	defer cancel()
 
-	if err := h.pool.Ping(ctx); err != nil {
+	if err := h.readiness.Ping(ctx); err != nil {
 		h.logger.Warn(
 			"readiness check failed",
 			"error",
@@ -84,6 +92,7 @@ func (h *Handlers) Ready(
 	)
 }
 
+// CreateTrip validates the request and creates a new trip.
 func (h *Handlers) CreateTrip(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -131,29 +140,29 @@ func (h *Handlers) CreateTrip(
 
 	now := time.Now().UTC()
 
-	trip := domain.Trip{
+	trip := tripdomain.Trip{
 		ID:       uuid.New(),
-		UserID:   uuid.UUID(body.UserId),
-		DriverID: uuid.UUID(body.DriverId),
+		UserID:   body.UserId,
+		DriverID: body.DriverId,
 
-		Start: domain.Destination{
+		Start: tripdomain.Destination{
 			Latitude:  body.StartPoint.Latitude,
 			Longitude: body.StartPoint.Longitude,
 		},
 
-		End: domain.Destination{
+		End: tripdomain.Destination{
 			Latitude:  body.EndPoint.Latitude,
 			Longitude: body.EndPoint.Longitude,
 		},
 
 		Price:     body.Price,
-		Status:    domain.TripStatusActive,
+		Status:    tripdomain.StatusActive,
 		StartedAt: now,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
 
-	if err := h.tripUsecase.Create(r.Context(), trip); err != nil {
+	if err := h.createUseCase.Execute(r.Context(), trip); err != nil {
 		h.writeError(w, r, err)
 		return
 	}
@@ -170,14 +179,15 @@ func (h *Handlers) CreateTrip(
 	)
 }
 
+// GetTrip retrieves a trip by its ID.
 func (h *Handlers) GetTrip(
 	w http.ResponseWriter,
 	r *http.Request,
 	tripID api.TripId,
 ) {
-	trip, err := h.tripUsecase.GetByID(
+	trip, err := h.getUseCase.Execute(
 		r.Context(),
-		uuid.UUID(tripID),
+		tripID,
 	)
 	if err != nil {
 		h.writeError(w, r, err)
@@ -191,14 +201,15 @@ func (h *Handlers) GetTrip(
 	)
 }
 
+// FinishTrip completes a trip by its ID.
 func (h *Handlers) FinishTrip(
 	w http.ResponseWriter,
 	r *http.Request,
 	tripID api.TripId,
 ) {
-	trip, err := h.tripUsecase.Finish(
+	trip, err := h.finishUseCase.Execute(
 		r.Context(),
-		uuid.UUID(tripID),
+		tripID,
 	)
 	if err != nil {
 		h.writeError(w, r, err)
@@ -218,7 +229,7 @@ func (h *Handlers) writeError(
 	err error,
 ) {
 	switch {
-	case errors.Is(err, domain.ErrTripNotFound):
+	case errors.Is(err, tripdomain.ErrTripNotFound):
 		writeProblem(
 			w,
 			r,
@@ -228,7 +239,7 @@ func (h *Handlers) writeError(
 			"Trip was not found",
 		)
 
-	case errors.Is(err, domain.ErrDriverBusy):
+	case errors.Is(err, tripdomain.ErrDriverBusy):
 		writeProblem(
 			w,
 			r,
@@ -238,7 +249,7 @@ func (h *Handlers) writeError(
 			"Driver already has an active trip",
 		)
 
-	case errors.Is(err, domain.ErrTripCompleted):
+	case errors.Is(err, tripdomain.ErrTripCompleted):
 		writeProblem(
 			w,
 			r,
@@ -306,7 +317,7 @@ func validateCoordinates(c api.Coordinates) error {
 	return nil
 }
 
-func toAPITrip(t *domain.Trip) api.Trip {
+func toAPITrip(t *tripdomain.Trip) api.Trip {
 	return api.Trip{
 		Id:       t.ID,
 		UserId:   t.UserID,
